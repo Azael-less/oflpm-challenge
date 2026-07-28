@@ -1,19 +1,24 @@
 # OFLPM Challenge
 
-Tablero privado para seguir el reto de League of Legends: progreso individual hacia cada rango objetivo, ranking actual, estadísticas, premios y perfiles de jugador.
+Panel privado para seguir el reto de League of Legends: progreso hacia metas de rango, ranking actual, perfiles, premios y una galería de jugadas del equipo.
 
-La aplicación se sirve completa desde un único servicio de **Render**. El frontend está en `docs/` y el backend consulta la API de Riot sin exponer la clave al navegador.
+La aplicación se sirve desde un único Web Service de Render. El frontend vive en `docs/`; el servidor Node expone las rutas API y mantiene las claves fuera del navegador.
 
 ## Ejecutar en local
 
-1. Instala Node.js 18 o superior.
-2. Crea un archivo `.env` en la raíz:
+Requiere Node.js 18 o superior. Crea `.env` en la raíz con las variables que uses:
 
 ```env
 RIOT_API_KEY=RGAPI-tu-clave-de-Riot
+CLOUDINARY_CLOUD_NAME=tu-cloud-name
+CLOUDINARY_API_KEY=tu-api-key
+CLOUDINARY_API_SECRET=tu-api-secret
+SUPABASE_URL=https://tu-proyecto.supabase.co
+SUPABASE_SECRET_KEY=tu-secret-key
+ADMIN_PASSWORD=una-contraseña-larga-y-privada
 ```
 
-3. Ejecuta:
+Nunca subas `.env` al repositorio ni compartas secretos en el frontend.
 
 ```bash
 npm start
@@ -21,34 +26,69 @@ npm start
 
 Abre `http://localhost:3000`.
 
-## Desplegar en Render
+## Render
 
-1. Sube este proyecto a un repositorio de GitHub.
-2. En Render crea un **Web Service** y conecta el repositorio.
-3. Configura:
+1. Crea un **Web Service** en Render conectado al repositorio.
+2. Usa `npm install` como Build Command y `npm start` como Start Command.
+3. Agrega en **Environment** las mismas variables necesarias de `.env`.
+4. Despliega. El frontend usa rutas relativas, por lo que no debes cambiar `docs/config.js` cuando todo vive en el mismo servicio.
 
-| Campo | Valor |
-| --- | --- |
-| Runtime | Node |
-| Build Command | `npm install` |
-| Start Command | `npm start` |
+## Riot: caché y límites
 
-4. En **Environment Variables**, agrega `RIOT_API_KEY` con tu clave de Riot.
-5. Despliega y comparte la URL de Render, por ejemplo `https://tu-reto.onrender.com`.
+- Los datos se actualizan automáticamente cada 30 minutos.
+- No hay refresco manual público.
+- Las consultas pasan por una cola de aproximadamente 15 solicitudes/segundo.
+- Si Riot falla, el backend intenta conservar el último resultado disponible.
+- Una clave de desarrollo de Riot expira; actualízala en Render cuando la renueves.
 
-`docs/config.js` usa `BACKEND_URL: "/api/leaderboard"`, por lo que no debes poner una URL externa mientras frontend y backend estén en este mismo servicio de Render.
+## Jugadores y metas
 
-## Límites de Riot y estabilidad
+Edita `api/players.js` para agregar o modificar jugadores:
 
-- El backend almacena los datos durante 30 minutos.
-- Una actualización manual se limita a una cada 5 minutos.
-- Las consultas a Riot pasan por una cola global de aproximadamente 15 por segundo, por debajo del máximo de 20 por segundo.
-- Si Riot rechaza temporalmente una actualización, se conserva y muestra el último dato válido.
+```js
+{ gameName: "nick", tagLine: "TAG", goalTier: "MASTER", startRank: { tier: "EMERALD", rank: "I", leaguePoints: 25 } }
+```
 
-Con una clave de desarrollo, recuerda renovarla antes de que caduque y actualizar `RIOT_API_KEY` en Render. Nunca pongas esa clave en `docs/config.js` ni en el repositorio.
+Para migrar a NA, cambia `PLATFORM` de `la1` a `na1`. `REGIONAL` permanece como `americas`.
 
-## Configuración del reto
+La vista **Progreso del reto** se ordena por cercanía actual a la meta de cada jugador. Si hay empate, se usa el rango/LP real como desempate.
 
-- Jugadores, objetivos de rango y punto de partida: `api/players.js`.
-- Lógica de datos y caché de Riot: `api/leaderboard.js`.
-- Diseño del sitio: `docs/style.css` y `docs/script.js`.
+## Premios
+
+Los premios normales se calculan desde partidas reales de Riot. Los premios de rol usan la posición real de la partida y requieren al menos 3 partidas en el rol:
+
+- Mejor Top, Jungla, Mid, ADC y Support.
+- Mayor soporte permanece como premio independiente de asistencias acumuladas.
+- Cuando no hay datos reales, la vista muestra un estado de espera; no inventa ganadores.
+
+## Clips y votos
+
+- Cloudinary almacena y entrega los MP4; el navegador sube directamente con una firma temporal del backend.
+- Supabase guarda los clips, reacciones y moderación.
+- ❤️ define **Mejor jugada** y la portada de “Jugada de la semana”.
+- 😂 define **Jugada más graciosa**.
+
+Antes de usar clips en un proyecto nuevo, ejecuta en Supabase → **SQL Editor**:
+
+1. `supabase-schema.sql`
+2. `supabase-reactions-migration.sql`
+3. `supabase-reactions-toggle.sql`
+
+## Administración privada
+
+La moderación de clips está en:
+
+```text
+/admin.html
+```
+
+No está enlazada desde la página pública y pide `ADMIN_PASSWORD`. Al eliminar una jugada se elimina su registro de Supabase y el vídeo correspondiente de Cloudinary.
+
+## Archivos principales
+
+- `api/players.js`: jugadores, región y metas.
+- `api/leaderboard.js`: Riot, estadísticas, premios y caché.
+- `api/plays.js`: clips, reacciones, Cloudinary, Supabase y administración.
+- `docs/script.js`: UI, ranking, modales y carrusel.
+- `docs/style.css`: estilos.
+- `supabase-*.sql`: estructura y migraciones de la base de datos.
