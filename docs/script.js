@@ -66,18 +66,18 @@
   function getTierIconPath(tier) {
     const normalized = (tier || "IRON").toUpperCase();
     const files = {
-      IRON: "Iron.webp",
-      BRONZE: "Bronze.webp",
-      SILVER: "Silver.webp",
-      GOLD: "Gold.webp",
-      PLATINUM: "Platinum.webp",
-      EMERALD: "Emerald.webp",
-      DIAMOND: "Diamond.webp",
-      MASTER: "Master.webp",
-      GRANDMASTER: "Grandmaster.webp",
-      CHALLENGER: "Challenger.webp",
+      IRON: "Iron.png",
+      BRONZE: "Bronze.png",
+      SILVER: "Silver.png",
+      GOLD: "Gold.png",
+      PLATINUM: "Platinum.png",
+      EMERALD: "Emerald.png",
+      DIAMOND: "Diamond.png",
+      MASTER: "Master.png",
+      GRANDMASTER: "Grandmaster.png",
+      CHALLENGER: "Challenger.png",
     };
-    return `/api/icons/${files[normalized] || "Unranked.webp"}`;
+    return `/api/icons/${files[normalized] || "Unranked.png"}`;
   }
 
   function getChampionIconUrl(player, championName) {
