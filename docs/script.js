@@ -6,7 +6,6 @@
   const updatedAtEl = document.getElementById("updated-at");
   const countdownEl = document.getElementById("countdown");
   const errorBox = document.getElementById("error-box");
-  const refreshBtn = document.getElementById("refresh-btn");
   const modal = document.getElementById("player-modal");
   const modalClose = document.getElementById("modal-close");
   const modalTitle = document.getElementById("modal-title");
@@ -66,18 +65,18 @@
   function getTierIconPath(tier) {
     const normalized = (tier || "IRON").toUpperCase();
     const files = {
-      IRON: "Iron.png",
-      BRONZE: "Bronze.png",
-      SILVER: "Silver.png",
-      GOLD: "Gold.png",
-      PLATINUM: "Platinum.png",
-      EMERALD: "Emerald.png",
-      DIAMOND: "Diamond.png",
-      MASTER: "Master.png",
-      GRANDMASTER: "Grandmaster.png",
-      CHALLENGER: "Challenger.png",
+      IRON: "Iron.webp",
+      BRONZE: "Bronze.webp",
+      SILVER: "Silver.webp",
+      GOLD: "Gold.webp",
+      PLATINUM: "Platinum.webp",
+      EMERALD: "Emerald.webp",
+      DIAMOND: "Diamond.webp",
+      MASTER: "Master.webp",
+      GRANDMASTER: "Grandmaster.webp",
+      CHALLENGER: "Challenger.webp",
     };
-    return `/api/icons/${files[normalized] || "Unranked.png"}`;
+    return `/api/icons/Nueva%20carpeta/${files[normalized] || "Unranked.webp"}`;
   }
 
   function getChampionIconUrl(player, championName) {
@@ -441,15 +440,13 @@
     }, 1000);
   }
 
-  async function load(forceRefresh = false) {
-    refreshBtn.disabled = true;
+  async function load() {
     statusDot.className = "status-dot";
-    statusText.textContent = forceRefresh ? "Actualizando…" : "Cargando datos…";
+    statusText.textContent = "Cargando datos…";
     errorBox.hidden = true;
 
     try {
-      const url = forceRefresh ? `${CFG.BACKEND_URL}?refresh=1` : CFG.BACKEND_URL;
-      const res = await fetch(url);
+      const res = await fetch(CFG.BACKEND_URL);
       if (!res.ok) throw new Error(`El backend respondió ${res.status}`);
       const data = await res.json();
 
@@ -472,14 +469,10 @@
       statusText.textContent = "No se pudo cargar";
       errorBox.hidden = false;
       errorBox.textContent =
-        "No se pudo conectar con el backend. Revisa que la URL en config.js sea correcta y que el backend esté desplegado en Vercel. Detalle: " +
+        "No se pudo conectar con el backend. Revisa que el servicio de Render esté activo. Detalle: " +
         err.message;
-    } finally {
-      refreshBtn.disabled = false;
     }
   }
-
-  refreshBtn.addEventListener("click", () => load(true));
   viewTabs.forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   modalClose.addEventListener("click", closePlayerModal);
   modal.addEventListener("click", (event) => {

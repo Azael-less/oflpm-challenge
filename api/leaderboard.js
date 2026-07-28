@@ -1,9 +1,9 @@
 // api/leaderboard.js
-// Función serverless (Vercel) que consulta la API oficial de Riot Games
+// Backend que consulta la API oficial de Riot Games
 // para el grupo de jugadores definido en players.js, cachea el resultado
 // por CACHE_TTL_MS y lo sirve como JSON al frontend.
 //
-// Variables de entorno requeridas (configúralas en el dashboard de Vercel,
+// Variables de entorno requeridas (configúralas en Render o en tu entorno local,
 // NUNCA las escribas en este archivo):
 //   RIOT_API_KEY   -> tu API key de developer.riotgames.com
 //
@@ -14,7 +14,8 @@
 
 const { PLAYERS, PLATFORM, REGIONAL } = require("./players.js");
 
-const CACHE_TTL_MS = 35 * 60 * 1000; // 35 minutos
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutos
+const RIOT_REQUEST_GAP_MS = 65; // ~15 solicitudes/segundo, bajo el límite de 20
 const RIOT_KEY_HEADER = "X-Riot-Token";
 // Reto: desde 30 de julio, 00:00 Colombia, hasta 30 de agosto, 00:00 Colombia.
 const CHALLENGE_START_AT = Date.parse("2026-07-30T00:00:00-05:00");
@@ -27,7 +28,6 @@ let cache = {
   ddragonVersion: null,
   championData: null,
 };
-
 const TIER_RANK = [
   "CHALLENGER",
   "GRANDMASTER",
@@ -104,12 +104,32 @@ function buildFallbackLeaderboard(now) {
   });
 }
 
-async function riotFetch(url, apiKey) {
-  const res = await fetch(url, { headers: { [RIOT_KEY_HEADER]: apiKey } });
+// Cola global por proceso: evita que varios perfiles disparen peticiones a Riot al mismo tiempo.
+let nextRiotRequestAt = 0;
+async function waitForRiotSlot() {
+  const now = Date.now();
+  const scheduledAt = Math.max(now, nextRiotRequestAt);
+  nextRiotRequestAt = scheduledAt + RIOT_REQUEST_GAP_MS;
+  const delay = scheduledAt - now;
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+}
+async function riotFetch(url, apiKey, attempt = 0) {
+    await waitForRiotSlot();
+const res = await fetch(url, { headers: { [RIOT_KEY_HEADER]: apiKey } });
+  if (res.status === 429 && attempt < 1) {
+    const retryAfterSeconds = Number(res.headers.get("retry-after") || 0);
+    // Solo reintentamos bloqueos cortos; en uno largo servimos caché en vez de
+    // mantener la función esperando y empeorar la ráfaga de solicitudes.
+    if (retryAfterSeconds > 0 && retryAfterSeconds <= 5) {
+      await new Promise((resolve) => setTimeout(resolve, retryAfterSeconds * 1000));
+      return riotFetch(url, apiKey, attempt + 1);
+    }
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     const err = new Error(`Riot API ${res.status} en ${url}: ${body}`);
     err.status = res.status;
+    err.retryAfter = res.headers.get("retry-after");
     throw err;
   }
   return res.json();
@@ -357,7 +377,7 @@ function sortLeaderboard(players) {
 }
 
 module.exports = async (req, res) => {
-  // CORS: la página vive en GitHub Pages, este backend en Vercel
+  // CORS se mantiene para permitir el acceso desde el frontend.
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   if (req.method === "OPTIONS") return res.status(204).end();
@@ -369,7 +389,7 @@ module.exports = async (req, res) => {
   if (!apiKey) {
     if (!useDemoData) {
       return res.status(500).json({
-        error: "Falta configurar RIOT_API_KEY. Agrega la clave en Vercel o en tu entorno local para usar datos reales.",
+        error: "Falta configurar RIOT_API_KEY. Agrega la clave en Render o en tu entorno local para usar datos reales.",
       });
     }
 
@@ -383,9 +403,7 @@ module.exports = async (req, res) => {
     });
   }
   const isStale = now - cache.fetchedAt > CACHE_TTL_MS;
-  const forceRefresh = req.query && req.query.refresh === "1";
-
-  if (cache.data && !isStale && !forceRefresh) {
+  if (cache.data && !isStale) {
     return res.status(200).json({
       players: cache.data,
       updatedAt: cache.fetchedAt,
@@ -393,6 +411,7 @@ module.exports = async (req, res) => {
       nextUpdateAt: cache.fetchedAt + CACHE_TTL_MS,
     });
   }
+
 
   try {
     const ddragonVersion = await getDdragonVersion();
