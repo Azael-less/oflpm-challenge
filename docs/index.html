@@ -66,6 +66,42 @@
     </div>
     <div id="awards-grid" class="awards-grid" aria-live="polite"></div>
   </section>
+  <section id="plays-section" class="plays-section" aria-labelledby="plays-title">
+    <div class="plays-head">
+      <div>
+        <p class="section-kicker">Momentos de la grieta</p>
+        <h2 id="plays-title">Jugada de la semana</h2>
+        <p>Sube tu mejor jugada, vota las del equipo y pelea por la portada.</p>
+      </div>
+      <button id="plays-upload-toggle" class="plays-upload-toggle" type="button">Subir una play</button>
+    </div>
+
+    <div id="plays-featured" class="plays-featured plays-loading"><span>Cargando jugadas…</span></div>
+    <div class="plays-carousel-wrap">
+      <button id="plays-prev" class="plays-arrow" type="button" aria-label="Ver jugadas anteriores">←</button>
+      <div id="plays-carousel" class="plays-carousel" aria-live="polite"></div>
+      <button id="plays-next" class="plays-arrow" type="button" aria-label="Ver más jugadas">→</button>
+    </div>
+
+    <div id="play-upload-modal" class="play-upload-modal" hidden>
+      <div class="play-upload-backdrop" data-close-play-upload></div>
+      <div class="play-upload-dialog" role="dialog" aria-modal="true" aria-labelledby="play-upload-title">
+        <button id="play-upload-close" class="play-upload-close" type="button" aria-label="Cerrar subida">×</button>
+        <div class="play-upload-hero">
+          <span class="section-kicker">Archivo de momentos</span>
+          <h3 id="play-upload-title">Comparte una jugada</h3>
+          <p>Un clutch, una outplay o el pentakill que merece quedar en la historia del reto.</p>
+          <div class="upload-rules"><span>MP4</span><span>Máx. 100 MB</span><span>Máx. 60 s</span></div>
+        </div>
+        <form id="play-upload-form" class="play-upload-form">
+          <div class="upload-step"><span>01</span><label>Jugador<select id="play-player" name="playerKey" required><option value="">Elige tu nick</option></select></label></div>
+          <div class="upload-step"><span>02</span><label>Título de la play<input id="play-title" name="title" maxlength="80" placeholder="Ej. Pentakill en dragón" required /></label></div>
+          <div class="upload-step upload-step-file"><span>03</span><label class="upload-file-label">Vídeo MP4<input id="play-file" name="video" type="file" accept="video/mp4" required /><span id="play-file-name">Selecciona un archivo</span></label></div>
+          <label class="upload-context">Contexto <span>(opcional)</span><textarea id="play-description" name="description" maxlength="240" placeholder="¿Qué pasó en la jugada?"></textarea></label>
+          <div class="upload-actions"><span id="play-upload-status" role="status"></span><button type="submit" class="play-submit">Publicar play</button></div>
+        </form>
+      </div>
+    </div>  </section>
   <p id="error-box" class="error-box" hidden></p>
 </main>
 

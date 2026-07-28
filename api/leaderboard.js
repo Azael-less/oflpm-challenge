@@ -161,6 +161,34 @@ async function getChampionData(ddragonVersion) {
   return cache.championData;
 }
 
+const ROLE_KEYS = new Set(["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]);
+function normalizeRole(participant) {
+  const role = String(participant?.teamPosition || participant?.individualPosition || "").toUpperCase();
+  return ROLE_KEYS.has(role) ? role : null;
+}
+function createRoleEntry() {
+  return { games: 0, wins: 0, kills: 0, deaths: 0, assists: 0, damage: 0, cs: 0, vision: 0, objectives: 0, duration: 0, champions: new Map() };
+}
+function summarizeRoleStats(roleStats) {
+  return Object.fromEntries(Object.entries(roleStats).map(([role, entry]) => {
+    const minutes = Math.max(1, entry.duration / 60);
+    const champions = Array.from(entry.champions.values())
+      .map((champion) => ({ ...champion, winRate: champion.games ? Math.round((champion.wins / champion.games) * 100) : 0 }))
+      .sort((a, b) => b.games - a.games || b.winRate - a.winRate);
+    return [role, {
+      games: entry.games,
+      wins: entry.wins,
+      losses: entry.games - entry.wins,
+      winRate: entry.games ? Math.round((entry.wins / entry.games) * 100) : 0,
+      kda: ((entry.kills + entry.assists) / Math.max(1, entry.deaths)).toFixed(2),
+      damagePerMin: Math.round(entry.damage / minutes),
+      csPerMin: Number((entry.cs / minutes).toFixed(1)),
+      visionPerMin: Number((entry.vision / minutes).toFixed(1)),
+      objectivesPerGame: Number((entry.objectives / Math.max(1, entry.games)).toFixed(1)),
+      topChampion: champions[0] || null,
+    }];
+  }));
+}
 async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start=0&count=8") {
   try {
     const matchIds = await riotFetch(
@@ -184,6 +212,7 @@ async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start
 
     const championStats = new Map();
     const recentMatches = [];
+    const roleStats = {};
     let matchesPlayed = 0;
     let wins = 0;
     let losses = 0;
@@ -216,6 +245,26 @@ async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start
       pentakills += participant.pentaKills || 0;
       quadras += participant.quadraKills || 0;
 
+      const role = normalizeRole(participant);
+      if (role) {
+        const roleEntry = roleStats[role] || (roleStats[role] = createRoleEntry());
+        const duration = Number(match?.info?.gameDuration || 0);
+        const durationSeconds = duration > 10000 ? duration / 1000 : duration;
+        roleEntry.games += 1;
+        roleEntry.wins += participant.win ? 1 : 0;
+        roleEntry.kills += participant.kills || 0;
+        roleEntry.deaths += participant.deaths || 0;
+        roleEntry.assists += participant.assists || 0;
+        roleEntry.damage += participant.totalDamageDealtToChampions || 0;
+        roleEntry.cs += (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0);
+        roleEntry.vision += participant.visionScore || 0;
+        roleEntry.objectives += (participant.dragonKills || 0) + (participant.baronKills || 0) + (participant.objectivesStolen || 0);
+        roleEntry.duration += durationSeconds;
+        const roleChampion = roleEntry.champions.get(participant.championName) || { name: participant.championName || "Desconocido", games: 0, wins: 0 };
+        roleChampion.games += 1;
+        roleChampion.wins += participant.win ? 1 : 0;
+        roleEntry.champions.set(participant.championName, roleChampion);
+      }
       const name = participant.championName || "Desconocido";
       recentMatches.push({
         champion: name,
@@ -225,6 +274,9 @@ async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start
         deaths: participant.deaths || 0,
         assists: participant.assists || 0,
         queue: match?.info?.queueId === 420 ? "Solo/Duo" : "Partida reciente",
+        duration: match?.info?.gameDuration || 0,
+        cs: (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0),
+        items: [participant.item0, participant.item1, participant.item2, participant.item3, participant.item4, participant.item5, participant.item6].filter((itemId) => Number(itemId) > 0),
       });
       const entry = championStats.get(name) || {
         name,
@@ -266,6 +318,8 @@ async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start
       championEntries,
       otpChampion,
       goodWinrateChampions: championEntries.filter((entry) => entry.games >= 2 && entry.winRate >= 60).slice(0, 3),
+      recentMatches,
+      roleStats: summarizeRoleStats(roleStats),
     };
   } catch (error) {
     console.warn("No se pudieron cargar estadísticas recientes:", error.message);
@@ -281,6 +335,8 @@ async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start
       championEntries: [],
       otpChampion: null,
       goodWinrateChampions: [],
+      recentMatches: [],
+      roleStats: {},
     };
   }
 }

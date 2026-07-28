@@ -20,6 +20,18 @@
   const boardTitle = document.getElementById("board-title");
   const boardKicker = document.getElementById("board-kicker");
   const boardDescription = document.getElementById("board-description");
+  const playsFeatured = document.getElementById("plays-featured");
+  const playsCarousel = document.getElementById("plays-carousel");
+  const playsPrev = document.getElementById("plays-prev");
+  const playsNext = document.getElementById("plays-next");
+  const playsUploadToggle = document.getElementById("plays-upload-toggle");
+  const playUploadModal = document.getElementById("play-upload-modal");
+  const playUploadClose = document.getElementById("play-upload-close");
+  const playUploadForm = document.getElementById("play-upload-form");
+  const playPlayer = document.getElementById("play-player");
+  const playFile = document.getElementById("play-file");
+  const playFileName = document.getElementById("play-file-name");
+  const playUploadStatus = document.getElementById("play-upload-status");
 
   const TIER_LABELS = {
     IRON: "Hierro",
@@ -40,6 +52,7 @@
   let nextUpdateAt = null;
   let countdownTimer = null;
   let currentPlayers = [];
+  let currentPlays = [];
   let currentBoardMode = "progress";
 
   function tierClass(tier) {
@@ -86,6 +99,17 @@
     const championId = aliases[championName] || String(championName || "").replace(/[^a-zA-Z0-9]/g, "");
     return `https://ddragon.leagueoflegends.com/cdn/${version}/img/champion/${championId}.png`;
   }
+  function getItemIconUrl(player, itemId) {
+    const versionMatch = (player.profileIconUrl || "").match(/\/cdn\/([^/]+)\//);
+    const version = versionMatch ? versionMatch[1] : "14.1.1";
+    return `https://ddragon.leagueoflegends.com/cdn/${version}/img/item/${itemId}.png`;
+  }
+
+  function formatMatchDuration(seconds) {
+    const total = Math.max(0, Number(seconds) || 0);
+    const minutes = Math.floor(total / 60);
+    return `${minutes}:${String(Math.floor(total % 60)).padStart(2, "0")}`;
+  }
   function rankValue(rank) {
     if (!rank) return 0;
     const tierIndex = Math.max(0, TIER_PROGRESS.indexOf((rank.tier || "IRON").toUpperCase()));
@@ -94,14 +118,14 @@
   }
 
   function getContestProgress(player) {
-    if (!player.startRank || !player.goalTier || !player.ranked) return null;
-    const start = rankValue(player.startRank);
+    if (!player.goalTier || !player.ranked) return null;
     const goal = rankValue({ tier: player.goalTier, rank: "IV", leaguePoints: 0 });
     const current = rankValue(player.ranked);
-    if (goal <= start) return null;
-    return Math.max(0, Math.min(1, (current - start) / (goal - start)));
+    if (goal <= 0) return null;
+    // El ranking compara qué tan cerca está hoy cada jugador de su meta,
+    // no solo los LP ganados desde el rango inicial configurado.
+    return Math.max(0, Math.min(1, current / goal));
   }
-
   function getCurrentRankScore(player) {
     return rankValue(player.ranked);
   }
@@ -224,7 +248,11 @@
     const players = [...currentPlayers];
     const isProgress = currentBoardMode === "progress";
     const ordered = isProgress
-      ? players.sort((a, b) => (getContestProgress(b) ?? -1) - (getContestProgress(a) ?? -1))
+      ? players.sort((a, b) => {
+          const progressDifference = (getContestProgress(b) ?? -1) - (getContestProgress(a) ?? -1);
+          const rankDifference = getCurrentRankScore(b) - getCurrentRankScore(a);
+          return progressDifference || rankDifference || (a.gameName || "").localeCompare(b.gameName || "");
+        })
       : players.sort((a, b) => getCurrentRankScore(b) - getCurrentRankScore(a));
     const highestProgress = Math.max(...ordered.map((player) => getContestProgress(player) ?? 0));
     const showPodium = isProgress && highestProgress > 0;
@@ -240,6 +268,7 @@
   function render(players) {
     currentPlayers = players;
     renderAwards(players);
+    populatePlayPlayers(players);
     renderBoard();
   }
 
@@ -254,15 +283,36 @@
 
     const playersWithStats = players.filter((player) => awardStats(player).matchesPlayed > 0);
     if (!playersWithStats.length) {
-      awardsGrid.innerHTML = '<p class="error-box">Aún no hay partidas registradas para el periodo del reto.</p>';
+      awardsDescription.textContent = "Los premios aparecerán cuando Riot tenga partidas reales de los perfiles del reto.";
+      awardsGrid.innerHTML = `<section class="awards-empty"><span class="section-kicker">Sin datos inventados</span><strong>El Salón de premios espera las primeras partidas.</strong><p>Cuando conectes los perfiles de NA, los ganadores se calcularán únicamente con estadísticas reales.</p></section>`;
       return;
     }
-
     const champion = (player) => awardStats(player).otpChampion;
     const otpScore = (player) => {
       const otp = champion(player);
       return otp ? otp.games * (otp.winRate / 100) : 0;
     };
+    const roleData = (player, role) => awardStats(player).roleStats?.[role] || null;
+    const roleScore = (player, role) => {
+      const data = roleData(player, role);
+      if (!data || data.games < 3) return -1;
+      const winRate = (data.wins + 2) / (data.games + 4);
+      const confidence = Math.min(data.games, 10) / 10;
+      const kda = Math.min(Number(data.kda) / 5, 1);
+      let impact;
+      if (role === "UTILITY") impact = Math.min((data.visionPerMin / 1.5 + Number(data.kda) / 5) / 2, 1);
+      else if (role === "JUNGLE") impact = Math.min((data.objectivesPerGame / 2.5 + Number(data.kda) / 5) / 2, 1);
+      else if (role === "BOTTOM") impact = Math.min((data.damagePerMin / 650 + data.csPerMin / 8) / 2, 1);
+      else impact = Math.min((data.damagePerMin / 600 + data.csPerMin / 7) / 2, 1);
+      return winRate * .55 + confidence * .2 + kda * .15 + impact * .1;
+    };
+    const makeRoleAward = (label, symbol, role) => ({
+      label, symbol, unit: "partidas", category: "roles",
+      value: (player) => roleData(player, role)?.games || 0,
+      score: (player) => roleScore(player, role),
+      detail: (player) => { const data = roleData(player, role); return data ? `${data.topChampion?.name || "—"} · ${data.games} partidas · ${data.winRate}% WR` : "Mínimo 3 partidas en el rol."; },
+      modalDetail: (player) => { const data = roleData(player, role); return data ? `${data.games} partidas · ${data.winRate}% WR · ${data.kda} KDA · campeón más usado: ${data.topChampion?.name || "—"}.` : "Sin suficientes partidas en este rol."; },
+    });
     const awards = [
       { label: "Rey del pentakill", symbol: "♛", unit: "pentakills", value: (p) => awardStats(p).pentakills || 0, detail: () => "Instinto de ejecución en las partidas recientes.", modalDetail: (p) => `${awardStats(p).pentakills || 0} pentakills en ${awardStats(p).matchesPlayed} partidas.` },
       { label: "Maestro de la cuadra", symbol: "✦", unit: "cuadras", value: (p) => awardStats(p).quadras || 0, detail: () => "A un paso de borrar al equipo rival.", modalDetail: (p) => `${awardStats(p).quadras || 0} cuadras registradas en la vista previa.` },
@@ -272,6 +322,14 @@
       { label: "Champion pool dorado", symbol: "◇", unit: "campeones", value: (p) => (awardStats(p).goodWinrateChampions || []).length, detail: (p) => `${(awardStats(p).goodWinrateChampions || []).map((c) => c.name).join(", ") || "Aún sin dos partidas por campeón."}`, modalDetail: (p) => `Campeones con buen win rate: ${(awardStats(p).goodWinrateChampions || []).map((c) => c.name).join(", ") || "sin registros suficientes"}.` },
       { label: "Mejor OTP", symbol: "◆", unit: "partidas", value: (p) => champion(p)?.games || 0, score: otpScore, detail: (p) => { const c = champion(p); return c ? `${c.name} · ${c.games} partidas · ${c.winRate}% WR` : "Aún sin campeón recurrente."; }, modalDetail: (p) => { const c = champion(p); return c ? `${c.name}: ${c.games} partidas y ${c.winRate}% de win rate.` : "Sin datos suficientes."; } },
     ];
+
+    [
+      makeRoleAward("Mejor Top", "⬆", "TOP"),
+      makeRoleAward("Mejor Jungla", "✦", "JUNGLE"),
+      makeRoleAward("Mejor Mid", "◆", "MIDDLE"),
+      makeRoleAward("Mejor ADC", "➤", "BOTTOM"),
+      makeRoleAward("Mejor Support", "✚", "UTILITY"),
+    ].filter((award) => playersWithStats.some((player) => award.score(player) >= 0)).forEach((award) => awards.push(award));
 
     awardsGrid.innerHTML = "";
     awards.forEach((award) => {
@@ -283,6 +341,27 @@
       card.dataset.symbol = award.symbol;
       card.innerHTML = `<span class="award-emblem">${award.symbol}</span><img class="award-player-icon" src="${winner.profileIconUrl}" alt="" loading="lazy" /><span class="award-content"><span class="award-label">${award.label}</span><span class="award-player">${winner.label || winner.gameName}</span><span class="award-tag">#${winner.tagLine}</span><span class="award-detail">${award.detail(winner)}</span></span><span class="award-value">${award.value(winner)}<small>${award.unit}</small></span>`;
       card.addEventListener("click", () => openAwardModal({ ...award, winner }, ranking));
+      awardsGrid.appendChild(card);
+    });
+    renderPlayAwards();
+  }
+
+  function renderPlayAwards() {
+    if (!currentPlays.length) return;
+    const playAwards = [
+      { label: "Mejor jugada", symbol: "♥", unit: "corazones", field: "hearts", detail: "La play más votada por el equipo." },
+      { label: "Jugada más graciosa", symbol: "😂", unit: "risas", field: "laughs", detail: "La play que más hizo reír al equipo." },
+    ];
+    playAwards.forEach((award) => {
+      const winner = [...currentPlays].sort((a, b) => Number(b[award.field] || (award.field === "hearts" ? b.votes : 0)) - Number(a[award.field] || (award.field === "hearts" ? a.votes : 0)))[0];
+      if (!winner) return;
+      const player = playerForPlay(winner);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "award-card award-card--play";
+      card.dataset.symbol = award.symbol;
+      card.innerHTML = `<span class="award-emblem">${award.symbol}</span><img class="award-player-icon" src="${escapeHtml(getPlayThumbnail(winner))}" alt="" loading="lazy" /><span class="award-content"><span class="award-label">${award.label}</span><span class="award-player">${escapeHtml(winner.title)}</span><span class="award-tag">${escapeHtml(player?.label || winner.player_name)}</span><span class="award-detail">${award.detail}</span></span><span class="award-value">${winner[award.field] || (award.field === "hearts" ? winner.votes || 0 : 0)}<small>${award.unit}</small></span>`;
+      card.addEventListener("click", () => document.getElementById("plays-section").scrollIntoView({ behavior: "smooth", block: "start" }));
       awardsGrid.appendChild(card);
     });
   }
@@ -329,7 +408,7 @@
       boardKicker.textContent = isProgress ? "Carrera personal" : "Escalera competitiva";
       boardTitle.textContent = isProgress ? "Progreso del reto" : "Ranking actual";
       boardDescription.textContent = isProgress
-        ? "Ordenado por avance desde el punto de partida hacia la meta personal."
+        ? "Ordenado por cercanía actual hacia la meta personal."
         : "Ordenado por rango y LP actuales; no representa el progreso del reto.";
       renderBoard();
     }
@@ -357,18 +436,22 @@
         `).join("")
       : '<div class="champion-item"><strong>Sin datos recientes</strong></div>';
 
-    const recentMatches = (stats.recentMatches || []).slice(0, 8);
+    const recentMatches = (stats.recentMatches || []).slice(0, 4);
     const matchMarkup = recentMatches.length
-      ? recentMatches.map((match) => `
-          <article class="match-card ${match.win ? "match-win" : "match-loss"}">
-            <img class="match-champion-icon" src="${match.championIconUrl}" alt="${match.champion}" loading="lazy" />
-            <div class="match-champion"><strong>${match.champion}</strong><span>${match.queue || "Partida reciente"}</span></div>
-            <div class="match-kda"><strong>${match.kills} / ${match.deaths} / ${match.assists}</strong><span>KDA</span></div>
-            <span class="match-result">${match.win ? "Victoria" : "Derrota"}</span>
-          </article>
-        `).join("")
+      ? recentMatches.map((match) => {
+          const kdaRatio = ((match.kills + match.assists) / Math.max(1, match.deaths)).toFixed(2);
+          const items = (match.items || []).slice(0, 6).map((itemId) => `<img src="${getItemIconUrl(player, itemId)}" alt="Objeto" loading="lazy" />`).join("");
+          return `
+            <article class="match-card match-card--opgg ${match.win ? "match-win" : "match-loss"}">
+              <span class="match-result">${match.win ? "V" : "D"}</span>
+              <img class="match-champion-icon" src="${match.championIconUrl}" alt="${match.champion}" loading="lazy" />
+              <div class="match-champion"><strong>${match.champion}</strong><span>${match.queue || "Clasificatoria"} · ${formatMatchDuration(match.duration)}</span></div>
+              <div class="match-kda"><strong>${match.kills} / ${match.deaths} / ${match.assists}</strong><span>${kdaRatio}:1 KDA</span></div>
+              <div class="match-cs"><strong>${match.cs ?? "—"}</strong><span>CS</span></div>
+              <div class="match-items">${items || '<span class="match-no-items">Sin objetos</span>'}</div>
+            </article>`;
+        }).join("")
       : '<div class="empty-history">Aún no hay partidas recientes para mostrar.</div>';
-
     const rankLabel = player.ranked
       ? `${TIER_LABELS[player.ranked.tier] || player.ranked.tier}${APEX.has(player.ranked.tier) ? "" : ` ${player.ranked.rank}`} · ${player.ranked.leaguePoints} LP`
       : "Sin clasificación";
@@ -386,7 +469,7 @@
           </div>
         </section>
         <section class="modal-section">
-          <div class="modal-section-title"><span>Historial reciente</span><small>Campeón · KDA · resultado</small></div>
+          <div class="modal-section-title"><span>Últimas 4 partidas</span><small>Campeón · KDA · CS · objetos</small></div>
           <div class="match-history">${matchMarkup}</div>
         </section>
         <section class="modal-section">
@@ -480,8 +563,149 @@
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !modal.hidden) closePlayerModal();
+    if (event.key === "Escape" && !playUploadModal.hidden) closePlayUpload();
   });
 
+  function escapeHtml(value) {
+    return String(value || "").replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
+  }
+
+  function getVoterId() {
+    const key = "oflpm_play_voter";
+    let voterId = localStorage.getItem(key);
+    if (!voterId) {
+      voterId = (window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`).replace(/[^a-zA-Z0-9_-]/g, "");
+      localStorage.setItem(key, voterId);
+    }
+    return voterId;
+  }
+
+  function populatePlayPlayers(players) {
+    if (!playPlayer || playPlayer.options.length > 1) return;
+    players.forEach((player) => {
+      const option = document.createElement("option");
+      option.value = `${player.gameName}#${player.tagLine}`;
+      option.textContent = player.label || `${player.gameName}#${player.tagLine}`;
+      playPlayer.appendChild(option);
+    });
+  }
+
+  function getPlayThumbnail(play) {
+    if (play.thumbnail_url) return play.thumbnail_url;
+    const cloudName = (play.video_url || "").match(/res\.cloudinary\.com\/([^/]+)/)?.[1];
+    return cloudName && play.public_id ? `https://res.cloudinary.com/${cloudName}/video/upload/so_0,w_960,c_fill/${play.public_id}.jpg` : "";
+  }
+
+  function playerForPlay(play) {
+    return currentPlayers.find((player) => `${player.gameName}#${player.tagLine}` === play.player_key);
+  }
+
+  function renderPlays(plays) {
+    if (!playsFeatured || !playsCarousel) return;
+    if (!plays.length) {
+      playsFeatured.className = "plays-featured plays-empty";
+      playsFeatured.innerHTML = '<div><span class="section-kicker">Aún no hay clips</span><strong>La primera play legendaria está por llegar.</strong><p>Sube un MP4 y quedará aquí para que el equipo la vote.</p></div>';
+      playsCarousel.innerHTML = "";
+      return;
+    }
+    const featured = plays[0];
+    const featuredPlayer = playerForPlay(featured);
+    const featuredAvatar = featuredPlayer?.profileIconUrl || "";
+    playsFeatured.className = "plays-featured";
+    playsFeatured.innerHTML = `
+      <video class="featured-video" controls preload="metadata" poster="${escapeHtml(getPlayThumbnail(featured))}"><source src="${escapeHtml(featured.video_url)}" type="video/mp4" /></video>
+      <div class="featured-copy"><span class="featured-label">Mejor jugada actual</span><h3>${escapeHtml(featured.title)}</h3><p>${escapeHtml(featured.description || "Jugadón enviado por el equipo.")}</p><div class="featured-player">${featuredAvatar ? `<img src="${escapeHtml(featuredAvatar)}" alt="" />` : ""}<span>${escapeHtml(featured.player_name)}</span><strong>♥ ${featured.hearts ?? featured.votes ?? 0} · 😂 ${featured.laughs || 0}</strong></div></div>`;
+    playsCarousel.innerHTML = plays.map((play) => {
+      const thumbnail = getPlayThumbnail(play);
+      return `<article class="play-card"><button class="play-card-media" type="button" data-play-video="${escapeHtml(play.video_url)}" data-play-title="${escapeHtml(play.title)}"><img src="${escapeHtml(thumbnail)}" alt="${escapeHtml(play.title)}" loading="lazy" /><span>▶</span></button><div class="play-card-copy"><strong>${escapeHtml(play.title)}</strong><span>${escapeHtml(play.player_name)}</span><div class="play-reactions"><button class="play-vote" type="button" data-play-react="heart" data-play-id="${play.id}" aria-label="Mejor jugada">♥ <b>${play.hearts ?? play.votes ?? 0}</b></button><button class="play-vote play-laugh" type="button" data-play-react="laugh" data-play-id="${play.id}" aria-label="Jugada más graciosa">😂 <b>${play.laughs || 0}</b></button></div></div></article>`;
+    }).join("");
+    playsCarousel.querySelectorAll("[data-play-react]").forEach((button) => button.addEventListener("click", () => reactToPlay(button.dataset.playId, button.dataset.playReact)));
+    playsCarousel.querySelectorAll("[data-play-video]").forEach((button) => button.addEventListener("click", () => {
+      const video = document.querySelector(".featured-video");
+      if (video) { video.src = button.dataset.playVideo; video.play().catch(() => {}); playsFeatured.scrollIntoView({ behavior: "smooth", block: "center" }); }
+    }));
+  }
+
+  async function loadPlays() {
+    try {
+      const response = await fetch("/api/plays");
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudieron cargar las jugadas.");
+      currentPlays = data.plays || [];
+      renderPlays(currentPlays);
+      if (currentPlayers.length) renderAwards(currentPlayers);
+    } catch (error) {
+      playsFeatured.className = "plays-featured plays-empty";
+      playsFeatured.innerHTML = `<div><strong>No se pudieron cargar las plays.</strong><p>${escapeHtml(error.message)}</p></div>`;
+    }
+  }
+
+  async function reactToPlay(playId, reaction) {
+    try {
+      const response = await fetch(`/api/plays/${playId}/react`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voterId: getVoterId(), reaction }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No fue posible registrar la reacción.");
+      loadPlays();
+    } catch (error) { window.alert(error.message); }
+  }
+
+  function openPlayUpload() {
+    playUploadStatus.textContent = "";
+    playUploadModal.hidden = false;
+    document.body.classList.add("modal-open");
+  }
+
+  function closePlayUpload() {
+    playUploadModal.hidden = true;
+    document.body.classList.remove("modal-open");
+  }
+  async function uploadPlay(event) {
+    event.preventDefault();
+    const file = playFile.files[0];
+    const playerKey = playPlayer.value;
+    const title = document.getElementById("play-title").value.trim();
+    const description = document.getElementById("play-description").value.trim();
+    if (!file || !playerKey || !title) return;
+    if (file.type !== "video/mp4" || file.size > 100 * 1024 * 1024) { playUploadStatus.textContent = "Usa un MP4 de máximo 100 MB."; return; }
+    const submit = playUploadForm.querySelector("button[type=submit]");
+    submit.disabled = true;
+    playUploadStatus.textContent = "Preparando subida segura…";
+    try {
+      const signatureResponse = await fetch("/api/plays/signature", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ playerKey }) });
+      const signatureData = await signatureResponse.json();
+      if (!signatureResponse.ok) throw new Error(signatureData.error || "No se pudo preparar la subida.");
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("api_key", signatureData.apiKey);
+      formData.append("timestamp", signatureData.timestamp);
+      formData.append("signature", signatureData.signature);
+      formData.append("folder", signatureData.folder);
+      playUploadStatus.textContent = "Subiendo vídeo a Cloudinary…";
+      const cloudResponse = await fetch(`https://api.cloudinary.com/v1_1/${signatureData.cloudName}/video/upload`, { method: "POST", body: formData });
+      const cloudData = await cloudResponse.json();
+      if (!cloudResponse.ok) throw new Error(cloudData.error?.message || "Cloudinary rechazó el vídeo.");
+      playUploadStatus.textContent = "Publicando la play…";
+      const thumbnailUrl = `https://res.cloudinary.com/${signatureData.cloudName}/video/upload/so_0,w_960,c_fill/${cloudData.public_id}.jpg`;
+      const saveResponse = await fetch("/api/plays", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ playerKey, title, description, publicId: cloudData.public_id, videoUrl: cloudData.secure_url, thumbnailUrl }) });
+      const saved = await saveResponse.json();
+      if (!saveResponse.ok) throw new Error(saved.error || "El vídeo subió, pero no se pudo publicar.");
+      playUploadForm.reset();
+      playFileName.textContent = "Selecciona un archivo";
+      playUploadStatus.textContent = "Play publicada. ¡Que empiecen los votos!";
+      loadPlays();
+      setTimeout(closePlayUpload, 650);
+    } catch (error) { playUploadStatus.textContent = error.message; }
+    finally { submit.disabled = false; }
+  }
+  playsUploadToggle.addEventListener("click", openPlayUpload);
+  playUploadClose.addEventListener("click", closePlayUpload);
+  playUploadModal.addEventListener("click", (event) => { if (event.target.matches("[data-close-play-upload]")) closePlayUpload(); });
+  playFile.addEventListener("change", () => { playFileName.textContent = playFile.files[0]?.name || "Selecciona un archivo"; });
+  playUploadForm.addEventListener("submit", uploadPlay);
+  playsPrev.addEventListener("click", () => playsCarousel.scrollBy({ left: -360, behavior: "smooth" }));
+  playsNext.addEventListener("click", () => playsCarousel.scrollBy({ left: 360, behavior: "smooth" }));
+
   load();
+  loadPlays();
   setInterval(() => load(), CFG.REFRESH_MS);
 })();

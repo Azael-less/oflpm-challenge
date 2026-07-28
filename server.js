@@ -18,6 +18,7 @@ if (fs.existsSync(envPath)) {
 }
 
 const leaderboardHandler = require('./api/leaderboard');
+const playsHandler = require('./api/plays');
 const docsDir = path.join(rootDir, 'docs');
 const iconsDir = path.join(rootDir, 'api', 'icons');
 
@@ -84,6 +85,10 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (url.pathname.startsWith('/api/icons/')) {
     serveFile(res, url.pathname.replace('/api/icons', ''), iconsDir);
+    return;
+  }
+  if (url.pathname.startsWith('/api/admin/plays') || url.pathname === '/api/plays' || url.pathname === '/api/plays/signature' || (url.pathname.startsWith('/api/plays/') && (url.pathname.endsWith('/vote') || url.pathname.endsWith('/react')))) {
+    playsHandler(req, createResponse(res), url.pathname).catch((error) => { console.error("Plays API fatal:", error); if (!res.headersSent) res.writeHead(500).end(); });
     return;
   }
   if (url.pathname === '/api/leaderboard') {
