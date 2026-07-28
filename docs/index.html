@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OFLPM Challenge · Tabla en vivo</title>
+<meta name="description" content="Tabla en vivo del reto OFLPM: elo, LP y récord de la escuadra." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="grain"></div>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">Temporada en curso — LAN</p>
+    <h1 class="title">OFLPM <span class="title-accent">CHALLENGE</span></h1>
+    <p class="subtitle">Ranked solo/duo. Elo, LP y récord de la escuadra, sin trampa ni excusas.</p>
+  </div>
+  <div class="hero-status">
+    <div class="status-row">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">Cargando datos…</span>
+    </div>
+    <div class="status-row muted">
+      <span>Última actualización: <strong id="updated-at">—</strong></span>
+    </div>
+    <div class="status-row muted">
+      <span>Próxima en: <strong id="countdown">—</strong></span>
+    </div>
+    <button id="refresh-btn" class="refresh-btn">Actualizar ahora</button>
+  </div>
+</header>
+
+<main>
+  <nav class="view-tabs" aria-label="Secciones del challenge">
+    <button class="view-tab is-active" type="button" data-view="progress">Progreso del reto</button>
+    <button class="view-tab" type="button" data-view="ranking">Ranking actual</button>
+    <button class="view-tab" type="button" data-view="awards">Premios</button>
+  </nav>
+
+  <section id="leaderboard-view" class="view-panel">
+    <div class="board-intro">
+      <div><p class="section-kicker" id="board-kicker">Carrera personal</p><h2 id="board-title">Progreso del reto</h2></div>
+      <p id="board-description">Ordenado por avance hacia la meta personal de cada jugador.</p>
+    </div>  <div class="board-head">
+    <span class="col col-rank">#</span>
+    <span class="col col-player">Jugador</span>
+    <span class="col col-tier">Rango</span>
+    <span class="col col-lp">LP</span>
+    <span class="col col-record">Récord</span>
+  </div>
+
+  <ol id="board" class="board" aria-live="polite">
+    <!-- filas generadas por script.js -->
+  </ol>
+
+  </section>
+
+  <section id="awards-view" class="view-panel" hidden>
+    <div class="awards-head">
+      <div><p class="section-kicker">Reconocimientos</p><h2>Salón de premios</h2></div>
+      <p id="awards-description">Vista previa con las últimas 8 partidas de cada jugador.</p>
+    </div>
+    <div id="awards-grid" class="awards-grid" aria-live="polite"></div>
+  </section>
+  <p id="error-box" class="error-box" hidden></p>
+</main>
+
+<div id="player-modal" class="player-modal" hidden>
+  <div class="player-modal-backdrop" data-close-modal></div>
+  <div class="player-modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <button class="modal-close" id="modal-close" aria-label="Cerrar detalle">×</button>
+    <div class="player-modal-header">
+      <div class="player-modal-title-group">
+        <h2 id="modal-title">Jugador</h2>
+        <p id="modal-subtitle">Detalle del rendimiento reciente</p>
+      </div>
+      <a id="modal-opgg" class="modal-link" href="#" target="_blank" rel="noopener noreferrer">Abrir OP.GG</a>
+    </div>
+    <div id="modal-body" class="modal-body"></div>
+  </div>
+</div>
+
+<footer>
+  <p>Datos vía Riot Games API · Actualiza automáticamente cada 35 min · Toca a un jugador para ver su perfil completo en OP.GG</p>
+</footer>
+
+<script src="config.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

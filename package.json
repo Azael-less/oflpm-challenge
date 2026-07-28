@@ -1,0 +1,12 @@
+{
+  "name": "oflpm-challenge-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend serverless para el leaderboard OFLPM Challenge (consume la API de Riot Games)",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
