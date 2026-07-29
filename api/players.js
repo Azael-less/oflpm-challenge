@@ -18,6 +18,9 @@ const PLAYERS = [
   { gameName: "ABOODSN", tagLine: "NA1", goalTier: "PLATINUM", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
   { gameName: "Ssóler16", tagLine: "NA1", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
   { gameName: "EDG DaunzuII", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "Optiboy", tagLine: "NA1", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "pockydrr", tagLine: "NA1", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
 ];
 
 module.exports = { PLAYERS, PLATFORM, REGIONAL };
+
