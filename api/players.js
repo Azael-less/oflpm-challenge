@@ -9,16 +9,15 @@
 // "goalTier" define la meta personal. Valores: IRON, BRONZE, SILVER,
 // GOLD, PLATINUM, EMERALD, DIAMOND, MASTER, GRANDMASTER o CHALLENGER.
 
-const PLATFORM = "la1"; // LAN. Cuando migren a NA: "na1"
+const PLATFORM = "na1"; // LAN. Cuando migren a NA: "na1"
 const REGIONAL = "americas"; // ruta regional para Account-v1 (LAN y NA usan "americas")
 
 const PLAYERS = [
-  { gameName: "akang", tagLine: "lan", goalTier: "DIAMOND", startRank: { tier: "EMERALD", rank: "IV", leaguePoints: 16 } },
-  { gameName: "bigenius", tagLine: "lan", goalTier: "MASTER", startRank: { tier: "EMERALD", rank: "II", leaguePoints: 81 } },
-  { gameName: "Sopa e Mojarra", tagLine: "lan", goalTier: "DIAMOND", startRank: { tier: "PLATINUM", rank: "III", leaguePoints: 10 } },
-  { gameName: "JUNIOR ES", tagLine: "LAN", goalTier: "PLATINUM", startRank: { tier: "SILVER", rank: "II", leaguePoints: 91 } },
-  { gameName: "Azael less", tagLine: "少ない", goalTier: "MASTER", startRank: { tier: "EMERALD", rank: "I", leaguePoints: 25 } },
-  { gameName: "CCR Loki4Carry", tagLine: "CCR", goalTier: "DIAMOND", startRank: { tier: "PLATINUM", rank: "I", leaguePoints: 51 } },
+  { gameName: "Okamidead", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "Miaa Khalifa", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "ABOODSN", tagLine: "NA1", goalTier: "PLATINUM", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "Ssóler16", tagLine: "NA1", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "EDG DaunzuII", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
 ];
 
 module.exports = { PLAYERS, PLATFORM, REGIONAL };

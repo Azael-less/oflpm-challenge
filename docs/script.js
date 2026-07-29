@@ -118,9 +118,9 @@
   }
 
   function getContestProgress(player) {
-    if (!player.goalTier || !player.ranked) return null;
+    if (!player.goalTier) return null;
     const goal = rankValue({ tier: player.goalTier, rank: "IV", leaguePoints: 0 });
-    const current = rankValue(player.ranked);
+    const current = player.ranked ? rankValue(player.ranked) : 0;
     if (goal <= 0) return null;
     // El ranking compara qué tan cerca está hoy cada jugador de su meta,
     // no solo los LP ganados desde el rango inicial configurado.
@@ -134,11 +134,12 @@
     const goalIndex = TIER_PROGRESS.indexOf(goalTier);
     if (goalIndex === -1) return null;
 
-    const currentTier = (player.ranked?.tier || "IRON").toUpperCase();
-    const currentIndex = Math.max(0, TIER_PROGRESS.indexOf(currentTier));
-    const currentDivision = APEX.has(currentTier) ? null : (player.ranked?.rank || "IV");
+    const isUnranked = !player.ranked;
+    const currentTier = isUnranked ? "UNRANKED" : (player.ranked.tier || "IRON").toUpperCase();
+    const currentIndex = isUnranked ? 0 : Math.max(0, TIER_PROGRESS.indexOf(currentTier));
+    const currentDivision = isUnranked || APEX.has(currentTier) ? null : (player.ranked?.rank || "IV");
     const currentLp = Math.max(0, Math.min(100, player.ranked?.leaguePoints || 0));
-    const currentLabel = `${TIER_LABELS[currentTier] || currentTier}${currentDivision ? ` ${currentDivision}` : ""}`;
+    const currentLabel = isUnranked ? "Sin clasificar" : `${TIER_LABELS[currentTier] || currentTier}${currentDivision ? ` ${currentDivision}` : ""}`;
 
     if (currentIndex >= goalIndex) {
       return { goalTier, currentLabel, steps: [], complete: true };
@@ -189,7 +190,7 @@
     const trend = computeTrend(player);
     const goalHtml = getGoalMarkup(player);
 
-    let tierHtml = `<span class="unranked">Sin clasificar</span>`;
+    let tierHtml = `${getTierBadgeMarkup("UNRANKED")}<span class="tier-label">Sin clasificar</span>`;
     let lpHtml = `<span class="lp">—</span>`;
     let recordHtml = `<span class="record">Sin partidas</span>`;
 
