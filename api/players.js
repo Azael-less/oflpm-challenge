@@ -16,7 +16,7 @@ const PLAYERS = [
   { gameName: "Okamidead", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
   { gameName: "Miaa Khalifa", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
   { gameName: "ABOODSN", tagLine: "NA1", goalTier: "PLATINUM", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
-  { gameName: "Ssóler16", tagLine: "NA1", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "Azael", tagLine: "333", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
   { gameName: "EDG DaunzuII", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
   { gameName: "Optiboy", tagLine: "NA1", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
   { gameName: "pockydrr", tagLine: "NA1", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
