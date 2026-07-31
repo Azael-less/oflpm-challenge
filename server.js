@@ -95,6 +95,9 @@ const server = http.createServer((req, res) => {
     req.query = Object.fromEntries(url.searchParams.entries());
     leaderboardHandler(req, createResponse(res));
     return;
+  }  if (url.pathname === '/api/active-games') {
+    leaderboardHandler.activeGamesHandler(req, createResponse(res));
+    return;
   }
   serveFile(res, url.pathname);
 });

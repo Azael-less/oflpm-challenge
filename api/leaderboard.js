@@ -15,6 +15,7 @@
 const { PLAYERS, PLATFORM, REGIONAL } = require("./players.js");
 
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutos
+const ACTIVE_GAMES_TTL_MS = 3 * 60 * 1000; // estado de partida, independiente del ranking
 const RIOT_REQUEST_GAP_MS = 65; // ~15 solicitudes/segundo, bajo el límite de 20
 const RIOT_KEY_HEADER = "X-Riot-Token";
 // Reto: desde 30 de julio, 00:00 Colombia, hasta 30 de agosto, 00:00 Colombia.
@@ -28,6 +29,7 @@ let cache = {
   ddragonVersion: null,
   championData: null,
 };
+let activeGamesCache = { data: null, fetchedAt: 0 };
 const TIER_RANK = [
   "CHALLENGER",
   "GRANDMASTER",
@@ -57,7 +59,7 @@ function buildFallbackLeaderboard(now) {
       tagLine: player.tagLine,
       label: player.label || player.gameName,
       goalTier: player.goalTier || null,
-    startRank: player.startRank || null,
+      startRank: player.startRank || null,
       profileIconId: 1 + index,
       profileIconUrl: `https://ddragon.leagueoflegends.com/cdn/14.1.1/img/profileicon/${1 + index}.png`,
       summonerLevel: 250 + index,
@@ -69,7 +71,7 @@ function buildFallbackLeaderboard(now) {
         losses,
         hotStreak: index % 2 === 0,
       },
-      opggUrl: `https://www.op.gg/summoners/na/${encodeURIComponent(player.gameName)}-${encodeURIComponent(player.tagLine)}`,
+      opggUrl: `https://www.leagueofgraphs.com/summoner/na/${encodeURIComponent(player.gameName)}-${encodeURIComponent(player.tagLine)}`,
       stats: {
         matchesPlayed: 8,
         wins: 4 + (index % 4),
@@ -192,7 +194,7 @@ function summarizeRoleStats(roleStats) {
 async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start=0&count=8") {
   try {
     const matchIds = await riotFetch(
-      `https://${REGIONAL}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?${query}`,
+      `https://${REGIONAL}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?${query}${query.includes("queue=") ? "" : "&queue=420"}`,
       apiKey
     );
 
@@ -352,6 +354,16 @@ async function getChallengeStats(puuid, apiKey, ddragonVersion) {
   const stats = await getRecentMatchStats(puuid, apiKey, ddragonVersion, query);
   return { ...stats, periodStatus: now >= CHALLENGE_END_AT ? "completed" : "active" };
 }
+async function getActiveGame(puuid, apiKey) {
+  try {
+    const game = await riotFetch(`https://${PLATFORM}.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/${puuid}`, apiKey);
+    const queueNames = { 420: "Solo/Dúo", 440: "Flex" };
+    return { queue: queueNames[game.gameQueueConfigId] || "En partida", seconds: game.gameLength || 0 };
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
+}
 async function fetchPlayer(player, apiKey, ddragonVersion) {
   const { gameName, tagLine } = player;
 
@@ -376,13 +388,19 @@ async function fetchPlayer(player, apiKey, ddragonVersion) {
   );
 
   const solo = entries.find((e) => e.queueType === "RANKED_SOLO_5x5");
-  const recentStats = await getRecentMatchStats(account.puuid, apiKey, ddragonVersion);
-  // Vista previa antes del inicio: usa el historial reciente en vez de dejar Premios vacío.
-  const awardStats = Date.now() < CHALLENGE_START_AT
-    ? { ...recentStats, periodStatus: "preview" }
-    : await getChallengeStats(account.puuid, apiKey, ddragonVersion);
+  const [recentStats, activeGame] = await Promise.all([
+    getRecentMatchStats(account.puuid, apiKey, ddragonVersion),
+    getActiveGame(account.puuid, apiKey),
+  ]);
+  // Reutilizamos el mismo lote de Solo/Dúo para tabla y premios.
+  // Evita duplicar decenas de solicitudes por jugador durante cada ciclo.
+  const now = Date.now();
+  const awardStats = {
+    ...recentStats,
+    periodStatus: now < CHALLENGE_START_AT ? "preview" : now >= CHALLENGE_END_AT ? "completed" : "active",
+  };
 
-  return {
+  const result = {
     gameName: account.gameName || gameName,
     tagLine: account.tagLine || tagLine,
     label: player.label || gameName,
@@ -401,12 +419,14 @@ async function fetchPlayer(player, apiKey, ddragonVersion) {
           hotStreak: solo.hotStreak,
         }
       : null,
-    opggUrl: `https://www.op.gg/summoners/lan/${encodeURIComponent(
-      account.gameName || gameName
-    )}-${encodeURIComponent(account.tagLine || tagLine)}`,
+    opggUrl: `https://www.leagueofgraphs.com/summoner/${PLATFORM.replace("1", "")}/${encodeURIComponent(account.gameName || gameName)}-${encodeURIComponent(account.tagLine || tagLine)}`,
     stats: recentStats,
     awardStats,
+    activeGame,
   };
+  // Se conserva solo en memoria para el refresco ligero; nunca se envía al navegador.
+  Object.defineProperty(result, "_puuid", { value: account.puuid, enumerable: false });
+  return result;
 }
 
 function sortLeaderboard(players) {
@@ -432,7 +452,7 @@ function sortLeaderboard(players) {
   });
 }
 
-module.exports = async (req, res) => {
+async function leaderboardHandler(req, res) {
   // CORS se mantiene para permitir el acceso desde el frontend.
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -525,4 +545,31 @@ module.exports = async (req, res) => {
     }
     return res.status(502).json({ error: err.message });
   }
-};
+}
+
+async function activeGamesHandler(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  if (req.method === "OPTIONS") return res.status(204).end();
+
+  const apiKey = (process.env.RIOT_API_KEY || "").trim();
+  if (!apiKey) return res.status(500).json({ error: "Falta configurar RIOT_API_KEY." });
+  if (!cache.data || !cache.data.length) return res.status(409).json({ error: "Primero debe cargarse la tabla del reto." });
+
+  const now = Date.now();
+  if (activeGamesCache.data && now - activeGamesCache.fetchedAt < ACTIVE_GAMES_TTL_MS) {
+    return res.status(200).json({ players: activeGamesCache.data, updatedAt: activeGamesCache.fetchedAt, cached: true });
+  }
+  const players = cache.data.filter((player) => player._puuid);
+  const settled = await Promise.allSettled(players.map(async (player) => ({
+    gameName: player.gameName,
+    tagLine: player.tagLine,
+    activeGame: await getActiveGame(player._puuid, apiKey),
+  })));
+  const statuses = settled.filter((result) => result.status === "fulfilled").map((result) => result.value);
+  activeGamesCache = { data: statuses, fetchedAt: now };
+  return res.status(200).json({ players: statuses, updatedAt: now, cached: false });
+}
+
+module.exports = leaderboardHandler;
+module.exports.activeGamesHandler = activeGamesHandler;

@@ -13,13 +13,12 @@ const PLATFORM = "na1"; // LAN. Cuando migren a NA: "na1"
 const REGIONAL = "americas"; // ruta regional para Account-v1 (LAN y NA usan "americas")
 
 const PLAYERS = [
-  { gameName: "bbquesauce", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
-  { gameName: "Miaa Khalifa", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
-  { gameName: "ABOODSN", tagLine: "NA1", goalTier: "PLATINUM", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
-  { gameName: "Azael", tagLine: "333", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
-  { gameName: "EDG DaunzuII", tagLine: "NA1", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
-  { gameName: "Optiboy", tagLine: "NA1", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
-  { gameName: "pockydrr", tagLine: "NA1", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "bbquesauce", tagLine: "NA1", label: "akang", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "ABOODSN", tagLine: "NA1", label: "Junior es", goalTier: "PLATINUM", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "Azael", tagLine: "333", label: "azael", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "EDG DaunzuII", tagLine: "NA1", label: "Loky", goalTier: "DIAMOND", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "Optiboy", tagLine: "NA1", label: "jhon", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
+  { gameName: "pockydrr", tagLine: "NA1", label: "bigenius", goalTier: "MASTER", startRank: { tier: "UNRANKED", rank: null, leaguePoints: 0 } },
 ];
 
 module.exports = { PLAYERS, PLATFORM, REGIONAL };

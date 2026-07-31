@@ -3,4 +3,5 @@
 window.OFLPM_CONFIG = {
   BACKEND_URL: "/api/leaderboard",
   REFRESH_MS: 30 * 60 * 1000, // 30 minutos, debe coincidir con CACHE_TTL_MS del backend
+  ACTIVE_GAMES_REFRESH_MS: 3 * 60 * 1000,
 };

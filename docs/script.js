@@ -224,8 +224,8 @@
       <span class="player">
         <img class="player-icon" src="${player.profileIconUrl}" alt="" loading="lazy" />
         <span class="player-names">
-          <span class="player-name">${player.label || player.gameName}</span>
-          <span class="player-tag">#${player.tagLine}</span>
+          <span class="player-name">${player.gameName}</span>
+          <span class="player-tag">${player.label || "Jugador"} · #${player.tagLine}${player.activeGame ? ` <b class="in-game">EN PARTIDA · ${player.activeGame.queue}</b>` : ""}</span>
         </span>
       </span>
       <span class="tier">${tierHtml}</span>
@@ -418,9 +418,10 @@
   }
   function openPlayerModal(player) {
     if (!player) return;
-    modalTitle.textContent = player.label || player.gameName;
-    modalSubtitle.textContent = "Ficha competitiva del reto";
+    modalTitle.textContent = player.gameName;
+    modalSubtitle.textContent = `${player.label || "Jugador"} · Ficha competitiva del reto${player.activeGame ? ` · En partida (${player.activeGame.queue})` : ""}`;
     modalOpgg.href = player.opggUrl;
+    modalOpgg.textContent = "Abrir LeagueOfGraphs";
 
     const stats = player.stats || {};
     const championEntries = (stats.championEntries || []).slice(0, 4);
@@ -557,6 +558,22 @@
         err.message;
     }
   }
+  async function refreshActiveGames() {
+    if (!currentPlayers.length) return;
+    try {
+      const res = await fetch("/api/active-games");
+      if (!res.ok) return;
+      const data = await res.json();
+      const statuses = new Map(data.players.map((player) => [`${player.gameName}#${player.tagLine}`, player.activeGame]));
+      currentPlayers = currentPlayers.map((player) => ({
+        ...player,
+        activeGame: statuses.get(`${player.gameName}#${player.tagLine}`) || null,
+      }));
+      renderBoard();
+    } catch (_) {
+      // El estado de partida es informativo: no interrumpe la tabla principal.
+    }
+  }
   viewTabs.forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   modalClose.addEventListener("click", closePlayerModal);
   modal.addEventListener("click", (event) => {
@@ -609,24 +626,17 @@
       playsCarousel.innerHTML = "";
       return;
     }
-    const featured = plays[0];
-    const featuredPlayer = playerForPlay(featured);
-    const featuredAvatar = featuredPlayer?.profileIconUrl || "";
-    playsFeatured.className = "plays-featured";
-    playsFeatured.innerHTML = `
-      <video class="featured-video" controls preload="metadata" poster="${escapeHtml(getPlayThumbnail(featured))}"><source src="${escapeHtml(featured.video_url)}" type="video/mp4" /></video>
-      <div class="featured-copy"><span class="featured-label">Mejor jugada actual</span><h3>${escapeHtml(featured.title)}</h3><p>${escapeHtml(featured.description || "Jugadón enviado por el equipo.")}</p><div class="featured-player">${featuredAvatar ? `<img src="${escapeHtml(featuredAvatar)}" alt="" />` : ""}<span>${escapeHtml(featured.player_name)}</span><strong>♥ ${featured.hearts ?? featured.votes ?? 0} · 😂 ${featured.laughs || 0}</strong></div></div>`;
-    playsCarousel.innerHTML = plays.map((play) => {
-      const thumbnail = getPlayThumbnail(play);
-      return `<article class="play-card"><button class="play-card-media" type="button" data-play-video="${escapeHtml(play.video_url)}" data-play-title="${escapeHtml(play.title)}"><img src="${escapeHtml(thumbnail)}" alt="${escapeHtml(play.title)}" loading="lazy" /><span>▶</span></button><div class="play-card-copy"><strong>${escapeHtml(play.title)}</strong><span>${escapeHtml(play.player_name)}</span><div class="play-reactions"><button class="play-vote" type="button" data-play-react="heart" data-play-id="${play.id}" aria-label="Mejor jugada">♥ <b>${play.hearts ?? play.votes ?? 0}</b></button><button class="play-vote play-laugh" type="button" data-play-react="laugh" data-play-id="${play.id}" aria-label="Jugada más graciosa">😂 <b>${play.laughs || 0}</b></button></div></div></article>`;
-    }).join("");
+    const renderFeatured = (play) => {
+      const featuredPlayer = playerForPlay(play);
+      const featuredAvatar = featuredPlayer?.profileIconUrl || "";
+      playsFeatured.className = "plays-featured";
+      playsFeatured.innerHTML = `<video class="featured-video" controls preload="metadata" poster="${escapeHtml(getPlayThumbnail(play))}"><source src="${escapeHtml(play.video_url)}" type="video/mp4" /></video><div class="featured-copy"><span class="featured-label">Mejor jugada actual</span><h3>${escapeHtml(play.title)}</h3><p>${escapeHtml(play.description || "Jugadón enviado por el equipo.")}</p><div class="featured-player">${featuredAvatar ? `<img src="${escapeHtml(featuredAvatar)}" alt="" />` : ""}<span>${escapeHtml(play.player_name)}</span><strong>♥ ${play.hearts ?? play.votes ?? 0} · 😂 ${play.laughs || 0}</strong></div></div>`;
+    };
+    renderFeatured(plays[0]);
+    playsCarousel.innerHTML = plays.map((play) => `<article class="play-card"><button class="play-card-media" type="button" data-play-id="${play.id}"><img src="${escapeHtml(getPlayThumbnail(play))}" alt="${escapeHtml(play.title)}" loading="lazy" /><span>▶</span></button><div class="play-card-copy"><strong>${escapeHtml(play.title)}</strong><span>${escapeHtml(play.player_name)}</span><div class="play-reactions"><button class="play-vote" type="button" data-play-react="heart" data-play-id="${play.id}" aria-label="Mejor jugada">♥ <b>${play.hearts ?? play.votes ?? 0}</b></button><button class="play-vote play-laugh" type="button" data-play-react="laugh" data-play-id="${play.id}" aria-label="Jugada más graciosa">😂 <b>${play.laughs || 0}</b></button></div></div></article>`).join("");
     playsCarousel.querySelectorAll("[data-play-react]").forEach((button) => button.addEventListener("click", () => reactToPlay(button.dataset.playId, button.dataset.playReact)));
-    playsCarousel.querySelectorAll("[data-play-video]").forEach((button) => button.addEventListener("click", () => {
-      const video = document.querySelector(".featured-video");
-      if (video) { video.src = button.dataset.playVideo; video.play().catch(() => {}); playsFeatured.scrollIntoView({ behavior: "smooth", block: "center" }); }
-    }));
+    playsCarousel.querySelectorAll(".play-card-media").forEach((button) => button.addEventListener("click", () => { const play = plays.find((item) => item.id === button.dataset.playId); if (play) { renderFeatured(play); playsFeatured.scrollIntoView({ behavior: "smooth", block: "center" }); document.querySelector(".featured-video")?.play().catch(() => {}); } }));
   }
-
   async function loadPlays() {
     try {
       const response = await fetch("/api/plays");
@@ -709,4 +719,5 @@
   load();
   loadPlays();
   setInterval(() => load(), CFG.REFRESH_MS);
+  setInterval(refreshActiveGames, CFG.ACTIVE_GAMES_REFRESH_MS);
 })();
