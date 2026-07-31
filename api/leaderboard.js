@@ -18,6 +18,13 @@ const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutos
 const ACTIVE_GAMES_TTL_MS = 3 * 60 * 1000; // estado de partida, independiente del ranking
 const RIOT_REQUEST_GAP_MS = 65; // ~15 solicitudes/segundo, bajo el límite de 20
 const RIOT_KEY_HEADER = "X-Riot-Token";
+// Cuántas partidas nuevas (no guardadas aún en Supabase) se descargan por
+// jugador en cada ciclo de caché. Antes era 8, lo que dejaba el cálculo de
+// rachas/premios calculado sobre historiales parciales mientras el backlog
+// se ponía al día. 30 sigue muy por debajo del límite de Riot (20 req/seg)
+// con el ritmo de RIOT_REQUEST_GAP_MS, y en 1-2 ciclos (30-60 min) cualquier
+// jugador queda sincronizado del todo.
+const MAX_NEW_MATCHES_PER_CYCLE = 30;
 // Reto: desde 30 de julio, 00:00 Colombia, hasta 30 de agosto, 00:00 Colombia.
 const CHALLENGE_START_AT = Date.parse("2026-07-30T00:00:00-05:00");
 const CHALLENGE_END_AT = Date.parse("2026-08-30T00:00:00-05:00");
@@ -137,6 +144,29 @@ const res = await fetch(url, { headers: { [RIOT_KEY_HEADER]: apiKey } });
   return res.json();
 }
 
+function getSupabaseConfig() {
+  const url = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SECRET_KEY || "";
+  if (!url || !key) throw new Error("Faltan SUPABASE_URL o SUPABASE_SECRET_KEY para el historial del reto.");
+  return { url, key };
+}
+
+async function supabaseRequest(path, options = {}) {
+  const { url, key } = getSupabaseConfig();
+  const response = await fetch(`${url}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+      ...(options.headers || {}),
+    },
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`Supabase ${response.status}: ${body}`);
+  return body ? JSON.parse(body) : null;
+}
 async function getDdragonVersion() {
   if (cache.ddragonVersion) return cache.ddragonVersion;
   try {
@@ -161,6 +191,25 @@ async function getChampionData(ddragonVersion) {
     cache.championData = {};
   }
   return cache.championData;
+}
+
+// El endpoint de Spectator (partida en curso) solo da el championId numérico
+// de cada participante; champion.json de ddragon lo indexa por nombre, con
+// un campo "key" que es ese mismo número como string. Este mapa invierte esa
+// relación para poder mostrar ícono/nombre del campeón de cada jugador en la
+// partida en vivo.
+async function getChampionIdMap(ddragonVersion) {
+  if (cache.championIdMap && cache.championIdMapVersion === ddragonVersion) {
+    return cache.championIdMap;
+  }
+  const championData = await getChampionData(ddragonVersion);
+  const map = {};
+  Object.values(championData).forEach((champion) => {
+    map[champion.key] = { id: champion.id, name: champion.name };
+  });
+  cache.championIdMap = map;
+  cache.championIdMapVersion = ddragonVersion;
+  return map;
 }
 
 const ROLE_KEYS = new Set(["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]);
@@ -191,6 +240,133 @@ function summarizeRoleStats(roleStats) {
     }];
   }));
 }
+function summarizeMatchStats(matchDetails, puuid, ddragonVersion) {
+  const championStats = new Map();
+  const recentMatches = [];
+  const roleStats = {};
+  let matchesPlayed = 0;
+  let wins = 0;
+  let losses = 0;
+  let assists = 0;
+  let pentakills = 0;
+  let quadras = 0;
+  let currentWinStreak = 0;
+  let currentLossStreak = 0;
+  let longestWinStreak = 0;
+  let longestLossStreak = 0;
+
+  // Las partidas deben procesarse en orden cronológico ascendente para que
+  // las rachas (win/loss streak) se calculen correctamente. matchIds de Riot
+  // vienen del más reciente al más antiguo, así que ordenamos por fecha de
+  // fin de partida antes de recorrerlas.
+  const orderedMatches = [...matchDetails].sort((a, b) => {
+    const aEnd = a?.info?.gameEndTimestamp || 0;
+    const bEnd = b?.info?.gameEndTimestamp || 0;
+    return aEnd - bEnd;
+  });
+
+  orderedMatches.forEach((match) => {
+    const participant = match?.info?.participants?.find((p) => p.puuid === puuid);
+    if (!participant) return;
+
+    matchesPlayed += 1;
+    if (participant.win) {
+      wins += 1;
+      currentWinStreak += 1;
+      currentLossStreak = 0;
+      longestWinStreak = Math.max(longestWinStreak, currentWinStreak);
+    } else {
+      losses += 1;
+      currentLossStreak += 1;
+      currentWinStreak = 0;
+      longestLossStreak = Math.max(longestLossStreak, currentLossStreak);
+    }
+
+    assists += participant.assists || 0;
+    pentakills += participant.pentaKills || 0;
+    quadras += participant.quadraKills || 0;
+
+    const role = normalizeRole(participant);
+    if (role) {
+      const roleEntry = roleStats[role] || (roleStats[role] = createRoleEntry());
+      const duration = Number(match?.info?.gameDuration || 0);
+      const durationSeconds = duration > 10000 ? duration / 1000 : duration;
+      roleEntry.games += 1;
+      roleEntry.wins += participant.win ? 1 : 0;
+      roleEntry.kills += participant.kills || 0;
+      roleEntry.deaths += participant.deaths || 0;
+      roleEntry.assists += participant.assists || 0;
+      roleEntry.damage += participant.totalDamageDealtToChampions || 0;
+      roleEntry.cs += (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0);
+      roleEntry.vision += participant.visionScore || 0;
+      roleEntry.objectives += (participant.dragonKills || 0) + (participant.baronKills || 0) + (participant.objectivesStolen || 0);
+      roleEntry.duration += durationSeconds;
+      const roleChampion = roleEntry.champions.get(participant.championName) || { name: participant.championName || "Desconocido", games: 0, wins: 0 };
+      roleChampion.games += 1;
+      roleChampion.wins += participant.win ? 1 : 0;
+      roleEntry.champions.set(participant.championName, roleChampion);
+    }
+    const name = participant.championName || "Desconocido";
+    recentMatches.push({
+      champion: name,
+      championIconUrl: `https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${name}.png`,
+      win: Boolean(participant.win),
+      kills: participant.kills || 0,
+      deaths: participant.deaths || 0,
+      assists: participant.assists || 0,
+      queue: match?.info?.queueId === 420 ? "Solo/Duo" : "Partida reciente",
+      duration: match?.info?.gameDuration || 0,
+      cs: (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0),
+      items: [participant.item0, participant.item1, participant.item2, participant.item3, participant.item4, participant.item5, participant.item6].filter((itemId) => Number(itemId) > 0),
+    });
+    const entry = championStats.get(name) || {
+      name,
+      games: 0,
+      wins: 0,
+      losses: 0,
+      kills: 0,
+      deaths: 0,
+      assists: 0,
+    };
+    entry.games += 1;
+    entry.wins += participant.win ? 1 : 0;
+    entry.losses += participant.win ? 0 : 1;
+    entry.kills += participant.kills || 0;
+    entry.deaths += participant.deaths || 0;
+    entry.assists += participant.assists || 0;
+    championStats.set(name, entry);
+  });
+
+  const championEntries = Array.from(championStats.values())
+    .map((entry) => ({
+      ...entry,
+      winRate: entry.games ? Math.round((entry.wins / entry.games) * 100) : 0,
+      kda: entry.games ? ((entry.kills + entry.assists) / Math.max(1, entry.deaths)).toFixed(2) : "0.00",
+    }))
+    .sort((a, b) => b.games - a.games || b.winRate - a.winRate);
+
+  const otpChampion = [...championEntries].sort((a, b) => b.games - a.games || b.winRate - a.winRate)[0] || null;
+
+  return {
+    matchesPlayed,
+    wins,
+    losses,
+    assists,
+    pentakills,
+    quadras,
+    longestWinStreak,
+    longestLossStreak,
+    championEntries,
+    otpChampion,
+    goodWinrateChampions: championEntries.filter((entry) => entry.games >= 2 && entry.winRate >= 60).slice(0, 3),
+    // Se muestran las 4 más recientes en la ficha del jugador, pero el orden
+    // cronológico ascendente de arriba ya sirvió para calcular las rachas;
+    // aquí sí queremos lo más reciente primero para el listado visual.
+    recentMatches: [...recentMatches].reverse(),
+    roleStats: summarizeRoleStats(roleStats),
+  };
+}
+
 async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start=0&count=8") {
   try {
     const matchIds = await riotFetch(
@@ -212,117 +388,7 @@ async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start
       matchDetails.push(...details);
     }
 
-    const championStats = new Map();
-    const recentMatches = [];
-    const roleStats = {};
-    let matchesPlayed = 0;
-    let wins = 0;
-    let losses = 0;
-    let assists = 0;
-    let pentakills = 0;
-    let quadras = 0;
-    let currentWinStreak = 0;
-    let currentLossStreak = 0;
-    let longestWinStreak = 0;
-    let longestLossStreak = 0;
-
-    matchDetails.forEach((match) => {
-      const participant = match?.info?.participants?.find((p) => p.puuid === puuid);
-      if (!participant) return;
-
-      matchesPlayed += 1;
-      if (participant.win) {
-        wins += 1;
-        currentWinStreak += 1;
-        currentLossStreak = 0;
-        longestWinStreak = Math.max(longestWinStreak, currentWinStreak);
-      } else {
-        losses += 1;
-        currentLossStreak += 1;
-        currentWinStreak = 0;
-        longestLossStreak = Math.max(longestLossStreak, currentLossStreak);
-      }
-
-      assists += participant.assists || 0;
-      pentakills += participant.pentaKills || 0;
-      quadras += participant.quadraKills || 0;
-
-      const role = normalizeRole(participant);
-      if (role) {
-        const roleEntry = roleStats[role] || (roleStats[role] = createRoleEntry());
-        const duration = Number(match?.info?.gameDuration || 0);
-        const durationSeconds = duration > 10000 ? duration / 1000 : duration;
-        roleEntry.games += 1;
-        roleEntry.wins += participant.win ? 1 : 0;
-        roleEntry.kills += participant.kills || 0;
-        roleEntry.deaths += participant.deaths || 0;
-        roleEntry.assists += participant.assists || 0;
-        roleEntry.damage += participant.totalDamageDealtToChampions || 0;
-        roleEntry.cs += (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0);
-        roleEntry.vision += participant.visionScore || 0;
-        roleEntry.objectives += (participant.dragonKills || 0) + (participant.baronKills || 0) + (participant.objectivesStolen || 0);
-        roleEntry.duration += durationSeconds;
-        const roleChampion = roleEntry.champions.get(participant.championName) || { name: participant.championName || "Desconocido", games: 0, wins: 0 };
-        roleChampion.games += 1;
-        roleChampion.wins += participant.win ? 1 : 0;
-        roleEntry.champions.set(participant.championName, roleChampion);
-      }
-      const name = participant.championName || "Desconocido";
-      recentMatches.push({
-        champion: name,
-        championIconUrl: `https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${name}.png`,
-        win: Boolean(participant.win),
-        kills: participant.kills || 0,
-        deaths: participant.deaths || 0,
-        assists: participant.assists || 0,
-        queue: match?.info?.queueId === 420 ? "Solo/Duo" : "Partida reciente",
-        duration: match?.info?.gameDuration || 0,
-        cs: (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0),
-        items: [participant.item0, participant.item1, participant.item2, participant.item3, participant.item4, participant.item5, participant.item6].filter((itemId) => Number(itemId) > 0),
-      });
-      const entry = championStats.get(name) || {
-        name,
-        games: 0,
-        wins: 0,
-        losses: 0,
-        kills: 0,
-        deaths: 0,
-        assists: 0,
-      };
-      entry.games += 1;
-      entry.wins += participant.win ? 1 : 0;
-      entry.losses += participant.win ? 0 : 1;
-      entry.kills += participant.kills || 0;
-      entry.deaths += participant.deaths || 0;
-      entry.assists += participant.assists || 0;
-      championStats.set(name, entry);
-    });
-
-    const championEntries = Array.from(championStats.values())
-      .map((entry) => ({
-        ...entry,
-        winRate: entry.games ? Math.round((entry.wins / entry.games) * 100) : 0,
-        kda: entry.games ? ((entry.kills + entry.assists) / Math.max(1, entry.deaths)).toFixed(2) : "0.00",
-      }))
-      .sort((a, b) => b.games - a.games || b.winRate - a.winRate);
-
-    const otpChampion = [...championEntries].sort((a, b) => b.games - a.games || b.winRate - a.winRate)[0] || null;
-
-    return {
-      matchesPlayed,
-      wins,
-      losses,
-      assists,
-      pentakills,
-      quadras,
-      longestWinStreak,
-      longestLossStreak,
-      championEntries,
-      otpChampion,
-      goodWinrateChampions: championEntries.filter((entry) => entry.games >= 2 && entry.winRate >= 60).slice(0, 3),
-      recentMatches,
-      roleStats: summarizeRoleStats(roleStats),
-    };
+    return summarizeMatchStats(matchDetails, puuid, ddragonVersion);
   } catch (error) {
     console.warn("No se pudieron cargar estadísticas recientes:", error.message);
     return {
@@ -343,28 +409,106 @@ async function getRecentMatchStats(puuid, apiKey, ddragonVersion, query = "start
   }
 }
 
-async function getChallengeStats(puuid, apiKey, ddragonVersion) {
+async function getChallengeStats(player, puuid, apiKey, ddragonVersion) {
   const now = Date.now();
-  if (now < CHALLENGE_START_AT) {
-    return { matchesPlayed: 0, periodStatus: "upcoming" };
-  }
+  if (now < CHALLENGE_START_AT) return { matchesPlayed: 0, periodStatus: "upcoming" };
 
   const endTime = Math.min(now, CHALLENGE_END_AT);
-  const query = `start=0&count=100&startTime=${Math.floor(CHALLENGE_START_AT / 1000)}&endTime=${Math.floor(endTime / 1000)}`;
-  const stats = await getRecentMatchStats(puuid, apiKey, ddragonVersion, query);
-  return { ...stats, periodStatus: now >= CHALLENGE_END_AT ? "completed" : "active" };
+  const playerKey = `${player.gameName}#${player.tagLine}`;
+  const query = `start=0&count=100&queue=420&startTime=${Math.floor(CHALLENGE_START_AT / 1000)}&endTime=${Math.floor(endTime / 1000)}`;
+
+  try {
+    const matchIds = await riotFetch(
+      `https://${REGIONAL}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?${query}`,
+      apiKey
+    );
+    const savedRows = await supabaseRequest(
+      `challenge_matches?player_key=eq.${encodeURIComponent(playerKey)}&select=match_id,match_data&limit=300`
+    );
+    const saved = new Map((savedRows || []).map((row) => [row.match_id, row.match_data]));
+    // La primera sincronización se completa por tandas: protege la cuota de Riot
+    // y desde entonces solo se descargan partidas que aún no están guardadas.
+    // MAX_NEW_MATCHES_PER_CYCLE (antes 8) evita que el cálculo de rachas y
+    // premios se haga sobre un historial parcial mientras se pone al día.
+    const missingIds = matchIds.filter((matchId) => !saved.has(matchId)).slice(0, MAX_NEW_MATCHES_PER_CYCLE);
+    const fetched = new Map();
+    for (let index = 0; index < missingIds.length; index += 2) {
+      const batch = missingIds.slice(index, index + 2);
+      // Promise.allSettled en vez de Promise.all: si una sola partida falla
+      // (red, 429 sin recuperar, etc.) las demás del lote y de lotes previos
+      // se guardan igual. Antes, un solo fallo aquí tumbaba TODO el bloque de
+      // partidas ya descargadas en este ciclo y, más arriba, el catch general
+      // de getChallengeStats descartaba también las ya guardadas en Supabase,
+      // reemplazando el cálculo completo por el fallback de 8 partidas.
+      const results = await Promise.allSettled(batch.map((matchId) =>
+        riotFetch(`https://${REGIONAL}.api.riotgames.com/lol/match/v5/matches/${matchId}`, apiKey)
+      ));
+      results.forEach((result, detailIndex) => {
+        if (result.status === "fulfilled") {
+          fetched.set(batch[detailIndex], result.value);
+        } else {
+          console.warn(`No se pudo descargar la partida ${batch[detailIndex]} de ${playerKey}:`, result.reason?.message);
+        }
+      });
+    }
+    if (fetched.size) {
+      const rows = [...fetched.entries()].map(([matchId, match]) => ({
+        player_key: playerKey,
+        match_id: matchId,
+        game_end_at: match?.info?.gameEndTimestamp ? new Date(match.info.gameEndTimestamp).toISOString() : null,
+        match_data: match,
+      }));
+      await supabaseRequest("challenge_matches?on_conflict=player_key,match_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(rows),
+      });
+      rows.forEach((row) => saved.set(row.match_id, row.match_data));
+    }
+
+    const availableMatches = matchIds.map((matchId) => saved.get(matchId)).filter(Boolean);
+    const stats = summarizeMatchStats(availableMatches, puuid, ddragonVersion);
+    return {
+      ...stats,
+      periodStatus: now >= CHALLENGE_END_AT ? "completed" : "active",
+      syncedMatches: availableMatches.length,
+      pendingMatches: Math.max(0, matchIds.length - availableMatches.length),
+    };
+  } catch (error) {
+    console.warn("No se pudo sincronizar el historial del reto:", error.message);
+    const recent = await getRecentMatchStats(puuid, apiKey, ddragonVersion);
+    return { ...recent, periodStatus: "sync-error", syncedMatches: recent.matchesPlayed, pendingMatches: 0 };
+  }
 }
-async function getActiveGame(puuid, apiKey) {
+async function getActiveGame(puuid, apiKey, ddragonVersion, championIdMap) {
   try {
     const game = await riotFetch(`https://${PLATFORM}.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/${puuid}`, apiKey);
     const queueNames = { 420: "Solo/Dúo", 440: "Flex" };
-    return { queue: queueNames[game.gameQueueConfigId] || "En partida", seconds: game.gameLength || 0 };
+    // No exponemos puuid de los demás participantes (son cuentas de terceros
+    // ajenas al reto); solo campeón, equipo, e "isPlayer" para resaltar al
+    // jugador del reto dentro de su propio equipo.
+    const participants = (game.participants || []).map((participant) => {
+      const champion = championIdMap?.[String(participant.championId)] || null;
+      return {
+        teamId: participant.teamId,
+        championName: champion?.name || "Desconocido",
+        championIconUrl: champion
+          ? `https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champion.id}.png`
+          : null,
+        isPlayer: participant.puuid === puuid,
+      };
+    });
+    return {
+      queue: queueNames[game.gameQueueConfigId] || "Otra",
+      seconds: game.gameLength || 0,
+      participants,
+    };
   } catch (error) {
     if (error.status === 404) return null;
     throw error;
   }
 }
-async function fetchPlayer(player, apiKey, ddragonVersion) {
+async function fetchPlayer(player, apiKey, ddragonVersion, championIdMap) {
   const { gameName, tagLine } = player;
 
   // 1) Riot ID -> PUUID (ruta regional: americas)
@@ -388,17 +532,12 @@ async function fetchPlayer(player, apiKey, ddragonVersion) {
   );
 
   const solo = entries.find((e) => e.queueType === "RANKED_SOLO_5x5");
-  const [recentStats, activeGame] = await Promise.all([
-    getRecentMatchStats(account.puuid, apiKey, ddragonVersion),
-    getActiveGame(account.puuid, apiKey),
+  const [awardStats, activeGame] = await Promise.all([
+    getChallengeStats(player, account.puuid, apiKey, ddragonVersion),
+    getActiveGame(account.puuid, apiKey, ddragonVersion, championIdMap),
   ]);
   // Reutilizamos el mismo lote de Solo/Dúo para tabla y premios.
   // Evita duplicar decenas de solicitudes por jugador durante cada ciclo.
-  const now = Date.now();
-  const awardStats = {
-    ...recentStats,
-    periodStatus: now < CHALLENGE_START_AT ? "preview" : now >= CHALLENGE_END_AT ? "completed" : "active",
-  };
 
   const result = {
     gameName: account.gameName || gameName,
@@ -420,7 +559,7 @@ async function fetchPlayer(player, apiKey, ddragonVersion) {
         }
       : null,
     opggUrl: `https://www.leagueofgraphs.com/summoner/${PLATFORM.replace("1", "")}/${encodeURIComponent(account.gameName || gameName)}-${encodeURIComponent(account.tagLine || tagLine)}`,
-    stats: recentStats,
+    stats: awardStats,
     awardStats,
     activeGame,
   };
@@ -491,13 +630,14 @@ async function leaderboardHandler(req, res) {
 
   try {
     const ddragonVersion = await getDdragonVersion();
+    const championIdMap = await getChampionIdMap(ddragonVersion);
     // Procesar dos perfiles a la vez mantiene las llamadas de Match-v5 por
     // debajo del límite de Riot sin sacrificar los datos del resto del grupo.
     const settled = [];
     for (let index = 0; index < PLAYERS.length; index += 2) {
       const batch = PLAYERS.slice(index, index + 2);
       const batchResults = await Promise.allSettled(
-        batch.map((player) => fetchPlayer(player, apiKey, ddragonVersion))
+        batch.map((player) => fetchPlayer(player, apiKey, ddragonVersion, championIdMap))
       );
       settled.push(...batchResults);
     }
@@ -560,11 +700,13 @@ async function activeGamesHandler(req, res) {
   if (activeGamesCache.data && now - activeGamesCache.fetchedAt < ACTIVE_GAMES_TTL_MS) {
     return res.status(200).json({ players: activeGamesCache.data, updatedAt: activeGamesCache.fetchedAt, cached: true });
   }
+  const ddragonVersion = cache.ddragonVersion || (await getDdragonVersion());
+  const championIdMap = await getChampionIdMap(ddragonVersion);
   const players = cache.data.filter((player) => player._puuid);
   const settled = await Promise.allSettled(players.map(async (player) => ({
     gameName: player.gameName,
     tagLine: player.tagLine,
-    activeGame: await getActiveGame(player._puuid, apiKey),
+    activeGame: await getActiveGame(player._puuid, apiKey, ddragonVersion, championIdMap),
   })));
   const statuses = settled.filter((result) => result.status === "fulfilled").map((result) => result.value);
   activeGamesCache = { data: statuses, fetchedAt: now };

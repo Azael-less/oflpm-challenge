@@ -277,11 +277,13 @@
     const awardStats = (player) => player.awardStats || player.stats || {};
     const periodStatus = players.find((player) => player.awardStats)?.awardStats?.periodStatus;
     if (awardsDescription) {
-      awardsDescription.textContent = periodStatus === "preview"
-        ? "Vista previa: últimas 8 partidas de cada jugador."
-        : "Partidas del reto: 30 de julio a 30 de agosto (hora Colombia).";
+      const pending = Math.max(0, ...players.map((player) => Number(awardStats(player).pendingMatches || 0)));
+      awardsDescription.textContent = periodStatus === "sync-error"
+        ? "No se pudo sincronizar Supabase; mostrando una vista limitada de partidas recientes."
+        : pending
+          ? `Historial del reto en sincronización: faltan hasta ${pending} partidas por registrar.`
+          : "Partidas Solo/Dúo del reto: 30 de julio a 30 de agosto (hora Colombia).";
     }
-
     const playersWithStats = players.filter((player) => awardStats(player).matchesPlayed > 0);
     if (!playersWithStats.length) {
       awardsDescription.textContent = "Los premios aparecerán cuando Riot tenga partidas reales de los perfiles del reto.";
@@ -416,6 +418,42 @@
 
     viewTabs.forEach((tab) => tab.classList.toggle("is-active", tab.dataset.view === viewName));
   }
+
+  // Arma las dos columnas de campeones de la partida en curso (estilo
+  // op.gg): equipo 100 (azul) a la izquierda, equipo 200 (rojo) a la
+  // derecha, resaltando el campeón del jugador del reto dentro de su equipo.
+  function renderLiveGameTeam(participants, teamId) {
+    return participants
+      .filter((participant) => participant.teamId === teamId)
+      .map((participant) => `
+        <span class="live-champ${participant.isPlayer ? " live-champ--you" : ""}" title="${escapeHtml(participant.championName)}">
+          ${participant.championIconUrl ? `<img src="${escapeHtml(participant.championIconUrl)}" alt="${escapeHtml(participant.championName)}" loading="lazy" />` : ""}
+        </span>
+      `).join("");
+  }
+
+  function getLiveGameMarkup(player) {
+    const activeGame = player.activeGame;
+    if (!activeGame || !activeGame.participants || !activeGame.participants.length) return "";
+
+    const blueTeam = renderLiveGameTeam(activeGame.participants, 100);
+    const redTeam = renderLiveGameTeam(activeGame.participants, 200);
+
+    return `
+      <section class="modal-section live-game-section">
+        <div class="modal-section-title">
+          <span>Partida en curso</span>
+          <small>${escapeHtml(activeGame.queue)} · ${formatMatchDuration(activeGame.seconds)}</small>
+        </div>
+        <div class="live-game-teams">
+          <div class="live-game-team live-game-team--blue">${blueTeam}</div>
+          <span class="live-game-vs">VS</span>
+          <div class="live-game-team live-game-team--red">${redTeam}</div>
+        </div>
+      </section>
+    `;
+  }
+
   function openPlayerModal(player) {
     if (!player) return;
     modalTitle.textContent = player.gameName;
@@ -459,10 +497,11 @@
       : "Sin clasificación";
     const goalLabel = player.goalTier ? (TIER_LABELS[player.goalTier] || player.goalTier) : "Meta pendiente";
     const hasRecentActivity = stats.matchesPlayed > 0;
+    const liveGameMarkup = getLiveGameMarkup(player);
     const activityMarkup = hasRecentActivity
       ? `
         <section class="modal-section">
-          <div class="modal-section-title"><span>Rendimiento reciente</span><small>Últimas ${stats.matchesPlayed} partidas</small></div>
+          <div class="modal-section-title"><span>Rendimiento del reto</span><small>${stats.matchesPlayed} partidas registradas</small></div>
           <div class="modal-grid">
             <div class="modal-stat"><div class="label">Partidas</div><div class="value">${stats.matchesPlayed}</div></div>
             <div class="modal-stat"><div class="label">Victorias</div><div class="value">${stats.wins}</div></div>
@@ -497,6 +536,7 @@
           <strong>${goalLabel}</strong>
         </div>
       </section>
+      ${liveGameMarkup}
       ${activityMarkup}
     `;
     modal.hidden = false;

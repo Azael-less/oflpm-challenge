@@ -73,6 +73,7 @@ Antes de usar clips en un proyecto nuevo, ejecuta en Supabase → **SQL Editor**
 1. `supabase-schema.sql`
 2. `supabase-reactions-migration.sql`
 3. `supabase-reactions-toggle.sql`
+4. supabase-challenge-matches.sql (historial de partidas y premios del reto)
 
 ## Administración privada
 
