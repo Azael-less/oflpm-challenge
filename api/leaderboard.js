@@ -69,7 +69,7 @@ function buildFallbackLeaderboard(now) {
         losses,
         hotStreak: index % 2 === 0,
       },
-      opggUrl: `https://www.op.gg/summoners/lan/${encodeURIComponent(player.gameName)}-${encodeURIComponent(player.tagLine)}`,
+      opggUrl: `https://www.op.gg/summoners/na/${encodeURIComponent(player.gameName)}-${encodeURIComponent(player.tagLine)}`,
       stats: {
         matchesPlayed: 8,
         wins: 4 + (index % 4),
